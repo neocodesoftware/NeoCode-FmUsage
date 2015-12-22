@@ -40,7 +40,7 @@ FileMaker Server access log analyser. Reads list of your FileMaker databases, pa
     This is an automatically generated message. Do not reply.
     
     Client                  Used Minutes    Billable Minutes
-    administrator group A   137                 0
+    administrator group A  	137                 0
     administrator group B  	1984                784
     administrator group C  	12                  0
 	
