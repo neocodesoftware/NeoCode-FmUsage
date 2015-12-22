@@ -24,16 +24,14 @@ FileMaker Server access log analyser. Reads list of your FileMaker databases, pa
     Phpmailer  https://github.com/PHPMailer/PHPMailer
 	
 == Configuration
-# Create MySQL database and tables using db.sql
-# Update config.ini
+* Create MySQL database and tables using db.sql
+* Update config.ini
 
 == Run It
-1 Run parselog.php to parse your FileMaker access log. 
-
-2 Run session.php to analyse logs
-
-3 Run sendstat.php to email Usage report. Usage report sends IPhone, IPad and Webdirect summary only.
-  Result email:
+* Run parselog.php to parse your FileMaker access log. 
+* Run session.php to analyse logs
+* Run sendstat.php to email Usage report. Usage report sends IPhone, IPad and Webdirect summary only.
+Result email:
   
     MyDatabase Usage report for November 2015
     This is an automatically generated message. Do not reply.
