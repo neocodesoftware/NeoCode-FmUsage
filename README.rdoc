@@ -16,7 +16,7 @@
                          |___/               
  
 == FmUsage Analyser
-FileMaker Server access log analyser. Reads list of your FileMaker databases, parse your FileMaker access log into MySQL DB and creates DB usage report.
+FileMaker Server access log analyser. Reads list of your FileMaker databases, parse your FileMaker access log into MySQL DB and creates a WebDirect and iOS usage report to identify who is heavily using your concurrent connections.
 
 == Requirements
     PHP
@@ -24,9 +24,8 @@ FileMaker Server access log analyser. Reads list of your FileMaker databases, pa
     Phpmailer  https://github.com/PHPMailer/PHPMailer
 	
 == Configuration
-1 Create MySQL database and tables using db.sql
-
-2 Update config.ini
+# Create MySQL database and tables using db.sql
+# Update config.ini
 
 == Run It
 1 Run parselog.php to parse your FileMaker access log. 
@@ -44,3 +43,5 @@ FileMaker Server access log analyser. Reads list of your FileMaker databases, pa
     administrator group B  	1984                784
     administrator group C  	12                  0
 	
+== To Do
+ add peak concurrent usage
