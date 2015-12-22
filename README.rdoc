@@ -34,4 +34,13 @@ FileMaker Server access log analyser. Reads list of your FileMaker databases, pa
 2 Run session.php to analyse logs
 
 3 Run sendstat.php to email Usage report. Usage report sends IPhone, IPad and Webdirect summary only.
+  Result email:
+  
+	MyDatabase Usage report for November 2015
+	This is an automatically generated message. Do not reply.
 
+	Client 					Used Minutes 	Billable Minutes
+	administrator group A  	137 				0
+	administrator group B  	1984 				784
+	administrator group C  	12 					0
+	
