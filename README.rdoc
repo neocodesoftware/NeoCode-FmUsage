@@ -17,19 +17,25 @@
  
 == FmUsage Analyser
 FileMaker Server access log analyser. Reads list of your FileMaker databases, parse your FileMaker access log into MySQL DB and creates a WebDirect and iOS usage report to identify who is heavily using your concurrent connections.
+Analyser helps to merger changes in performance of the application with new configuration/hardware/software/code ...
 
 == Requirements
     PHP
     MySQL
     Phpmailer  https://github.com/PHPMailer/PHPMailer
+    Google calendar.
 	
 == Configuration
 * Create MySQL database and tables using db.sql
 * Update config.ini
+* Turn on the Google Calendar API. https://developers.google.com/google-apps/calendar/quickstart/php#prerequisites
+* Run parsestats.php. On first run you will be asked to confirm using google API to access calendar.
 
 == Run It
-* Run parselog.php to parse your FileMaker access log. 
+* Run parselog.php to parse your FileMaker access and event logs.
+  Configure scheduler to run it at least once a day
 * Run session.php to analyse logs
+  Configure scheduler to run it at least once a day (5-10 minutes after parselog.php
 * Run sendstat.php to email Usage report. Usage report sends IPhone, IPad and Webdirect summary only.
 Result email:
   
@@ -40,6 +46,11 @@ Result email:
     administrator group A  	137                 0
     administrator group B  	1984                784
     administrator group C  	12                  0
-	
+
+* Run report_sched.php to save report for scheduled tasks in Google Calendar
+  Configure scheduler to run it at least once a day (5-10 min after session.php)
+* Run parsestats.php to analyze FileMaker stats log and save max number of users connected to the server for the last 30 min in Google Calendar
+  Configure scheduler to run it every 30 min (for example, every 15th and 45th min)
+
 == To Do
  add peak concurrent usage

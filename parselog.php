@@ -1,23 +1,8 @@
 <?php
 
 // parselog.php - parse FileMaker access log file
-// 	Access log codes: http://help.filemaker.com/app/answers/detail/a_id/7275/~/filemaker-server-event-log-messages
 //
-// Examples:
-//94 Client "%1" opening database "%2" as "%3".
-//2015-03-31 07:04:12.581 -0700	Information	94	NICOLE	Client "Yurii [192.168.1.10]" opening database "MyDatabase" as "MyUserName".
-//
-//98 Client "%1" closing database "%2" as "%3".
-//2015-03-31 07:17:02.176 -0700	Information	98	NICOLE	Client "Yurii (MyComputer) [192.168.1.10]" closing database "MyDatabase" as "MyUserName".
-//
-//22 Client "%1" closing a connection.
-//2015-03-31 07:20:25.208 -0700	Information	22	NICOLE	Client "Yurii (MyComputer) [192.168.1.10]" closing a connection.
-//
-//638	Client "%1" opening a connection from "%2" using "%3".
-//2015-03-31 07:21:05.770 -0700	Information	638	NICOLE	Client "Yurii" opening a connection from "MyComputer (192.168.1.10)" using "Pro 13.0v4 [fmapp]".
-//
-//
-// Vers. 1.0 , YP 12/08/2015
+// Vers. 1.0 , YP 03/22/2016
 //
 // Parse FileMaker access logs.
 //
@@ -26,14 +11,26 @@
 // 1-888-748-0668 http://store.neocodesoftware.com
 //
 // History:
-// ALPHA, YP 12/08/2015 - Alpha release
+// ALPHA, YP 08/12/2015 - Alpha release
+// 1.0, YP 03/22/2016 - Added Events log parsing
 //
 
 include_once('config.php');			// configuration and common stuff
 									// Global vars
 $FM_EXTENSIONS = array('fmp12');
-$FM_COLLECT_CODES = array (94,98,22,638);		// FM log codes we want to collect. THe complete list is here http://help.filemaker.com/app/answers/detail/a_id/7275/~/filemaker-server-event-log-messages
-
+$FM_COLLECT_CODES = array (94,98,22,638,689,150,644,645,30,152);		// FM log codes we want to collect.
+// The complete list is here http://help.filemaker.com/app/answers/detail/a_id/7275/~/filemaker-server-event-log-messages
+// 22 	Informational 	Client "%1" closing a connection.	- ACCESS
+// 30 	Warning 	Client "%1" no longer responding; connection closed. (%2) - ACCESS TODO %1 - client+IP, %2 - error code
+// 94   Informational 	Client "%1" opening database "%2" as "%3". - ACCESS
+// 98 	Informational 	Client "%1" closing database "%2" as "%3". - ACCESS
+// 638 	Informational 	Client "%1" opening a connection from "%2" using "%3". - ACCESS
+//
+// 689 	Informational 	Schedule "%1" has started FileMaker script "%2". - SCRIPT %1 - schedule name, %2 - script name
+// 150 	Informational 	Schedule "%1" completed. - SCRIPT %1 - schedule name,
+// 152 	Informational 	Schedule "%1" aborted; aborted by user.
+// 644 	Informational 	Schedule "%1" completed; last scripting error (%2).
+// 645 	Informational 	Schedule "%1" scripting error (%2) at "%3".	- SCRIPT %1 - schedule name, %2 - error code, %3 - "DBName: error description"
 									// Start here
 $LOG->message("parselog started");
 $ckStart = new CheckStart($CONFIG['VAR_DIR'].'parselog.lock');
@@ -44,18 +41,14 @@ if(!$ckStart->canStart()) {			// Check if script already running. Doesn't allow 
 $databases = array();				// Find all databases for all clients
 foreach (scandir($CONFIG['FM_DB_DIR']) as $client) {
   if (!in_array($client,array(".","..")) && is_dir($CONFIG['FM_DB_DIR'].'/'.$client)) {
-    $ar = collectFmDbs($CONFIG['FM_DB_DIR'].'/'.$client);
-    foreach ($ar as $db){
-      $databases[$db] = $client;
-    }
+	$ar = collectFmDbs($CONFIG['FM_DB_DIR'].'/'.$client);
+	foreach ($ar as $db){
+	  $databases[$db] = $client;
+	}
   }
 }
 //print_r($databases);
 
-									// Read date/time of the last record in log
-$lastDateTime = getDateFromLog(readLastLine($CONFIG['FM_ACCESS_LOG']));
-									// Read date/time of the first record in log
-$firstDateTime = getDateFromLog(readFirstLine($CONFIG['FM_ACCESS_LOG']));
 
 $lastRecDateTime = '';				// Last record in DB
 $sth = $DB->dbh->prepare("SELECT LogDate, LogTime FROM FmAccessLog ORDER BY LogDate DESC, LogTime DESC LIMIT 1");
@@ -66,42 +59,54 @@ if ($sth->errorInfo()[1]) {
 if ($lastRecord = $sth->fetch(PDO::FETCH_ASSOC)) {
   $lastRecDateTime = $lastRecord['LogDate'].' '.$lastRecord['LogTime'];
 }
+								// Prepare list of log files to parse
+$log2Parse = array();			// List of log files to parse
+$lastDateTime = '';				// Last record in log file (we'll select older record among several log files)
+foreach (array('FM_ACCESS_LOG','FM_EVENT_LOG') as $log) {
+  $myLastDateTime = getDateFromLog(readLastLine($CONFIG[$log]));	// Read date/time of the last record in log
+  if (!$lastDateTime || $lastDateTime > $myLastDateTime) {
+	$lastDateTime = $myLastDateTime;	// Select older record among several log files
+  }
+  $firstDateTime = getDateFromLog(readFirstLine($CONFIG[$log]));	// Read date/time of the first record in log
 
-$log2Parse = array($CONFIG['FM_ACCESS_LOG']);// List of log files to parse
-if ($lastRecDateTime < $firstDateTime &&	// If last record in DB is less that first record in file - Log was rotated
-  array_key_exists('FM_ACCESS_LOG_ROTATE',$CONFIG) &&
-  $CONFIG['FM_ACCESS_LOG_ROTATE'])			// Additionally parse previous log
-{
-  $LOG->message("Additionally parse previous log: ".$CONFIG['FM_ACCESS_LOG_ROTATE']);
-  array_unshift($log2Parse,$CONFIG['FM_ACCESS_LOG_ROTATE']);
+  if ($lastRecDateTime < $firstDateTime &&							// If last record in DB is less that first record in file - Log was rotated
+	array_key_exists($log.'_ROTATE',$CONFIG) &&
+	$CONFIG[$log.'_ROTATE'])								// Additionally parse previous log
+  {
+	$LOG->message("Additionally parse previous log: ".$CONFIG[$log.'_ROTATE']);
+	$log2Parse[] = $CONFIG[$log.'_ROTATE'];
+  }
+  $log2Parse[] = $CONFIG[$log];
 }
 
+								// Parse log files
 foreach ($log2Parse as $logFile) {
   if ($handle = fopen($logFile, "r")) {
 	while (($line = fgets($handle)) !== false) {
-	  $rdate = $rtime = $rcode = $rserver = $rclient = $rip = $rdb = $rlogin = $rfmapp = '';
+	  $rdate = $rtime = $rsec = $rcode = $rserver = $rclient = $rip = $rdb = $rlogin = $rfmapp = $rcomments = ''; // Values to store for each record
 	  $line_parts = explode("\t", $line);
 	  $rcode = $line_parts[2];
 	  $rserver = $line_parts[3];
 	  if (!in_array($rcode,$FM_COLLECT_CODES)) {			// We do not need this record
 		continue;
 	  }
-	  if (preg_match('/^([\d-]+) ([\d:]+)\.\d+ ([=\d-]+ )?/', $line_parts[0], $matches)) {
+	  if (preg_match('/^([\d-]+) ([\d:]+)\.(\d+) ([=\d-]+ )?/', $line_parts[0], $matches)) {
 		$rdate = $matches[1];
 		$rtime = $matches[2];
+		$rsec = $matches[3];
 	  } else {
 		$LOG->message("Can't parse date/time: $line");
 		continue;                        // Invalid date/time format
 	  }
 
-	  if ($lastDateTime && $lastDateTime <= "$rdate $rtime" ||        // Don't save very last records - we'll start with this records next time and this way we avoid duplicate records.
+	  if ($lastDateTime && $lastDateTime <= "$rdate $rtime" ||      // Don't save very last records - we'll start with this records next time and this way we avoid duplicate records.
 		  $lastRecDateTime && $lastRecDateTime >= "$rdate $rtime")	// We already have this date in DB
 	  {
 		continue;									// go to next line(record)
 	  }
 
-	  if ($rcode == '94' || $rcode == '98' || $rcode == '22') {
-		if (preg_match('/^Client "([^"]+)" (closing a connection|[^"]+ "([^"]+)" as "([^"]+)")/', $line_parts[4], $matches)) {
+	  if ($rcode == '94' || $rcode == '98' || $rcode == '22' || $rcode == '30') {
+		if (preg_match('/^Client "([^"]+)" (closing a connection|no longer responding.+|[^"]+ "([^"]+)" as "([^"]+)")/', $line_parts[4], $matches)) {
           $cl = $matches[1];
           if ($rcode == '94' || $rcode == '98') {
 		    $rdb = $matches[3];
@@ -120,6 +125,7 @@ foreach ($log2Parse as $logFile) {
 		  continue;                        // Invalid date/time format
 		}
 	  }
+
 	  else if ($rcode == '638') {
 		if (preg_match('/^Client "([^"]*)" opening a connection from "([^"]+)" using "([^"]+)"/', $line_parts[4], $matches)) {
 		  $cl1 = $matches[1];
@@ -138,13 +144,24 @@ foreach ($log2Parse as $logFile) {
 		  continue;                        // Invalid date/time format
 		}
 	  }
+
+	  else if ($rcode == '689' || $rcode == '150' || $rcode == '645' || $rcode == '644' || $rcode == '152') {
+		if (preg_match('/^Schedule "([^"]*)" ([^\r\n]+)/', $line_parts[4], $matches)) {
+		  $rclient = $matches[1];	// Save schedule name as client name
+		  $rcomments = $matches[2];					// scripting error will be saved in comments
+		} else {
+		  $LOG->message("Can't parse record with code $rcode: $line");
+		  continue;                       			// Invalid format
+		}
+	  }
+
 	  else {
         continue;							// We don't need this record
 	  }
 											// Save record in DB
 
-	  $sth = $DB->dbh->prepare("INSERT INTO FmAccessLog (LogDate,LogTime,LogCode,ServerName,FmClient,FmClientIP,DbName,FmLoginName,FmApp,OwnerName) VALUES (?,?,?,?,?,?,?,?,?,?)");
-	  $sth->execute(array($rdate, $rtime, $rcode, $rserver, $rclient, $rip, $rdb, $rlogin, $rfmapp,array_key_exists($rdb,$databases) ? $databases[$rdb] : ''));
+	  $sth = $DB->dbh->prepare("INSERT INTO FmAccessLog (LogDate,LogTime,LogSec,LogCode,ServerName,FmClient,FmClientIP,DbName,FmLoginName,FmApp,OwnerName,Comments) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)");
+	  $sth->execute(array($rdate, $rtime, $rsec, $rcode, $rserver, $rclient, $rip, $rdb, $rlogin, $rfmapp,array_key_exists($rdb,$databases) ? $databases[$rdb] : '',$rcomments));
 	  if ($sth->errorInfo()[1]) {
   	    printLogAndDie("DB error: ".$sth->errorInfo()[2]);
       }
@@ -157,19 +174,6 @@ foreach ($log2Parse as $logFile) {
 
 $LOG->message("parselog finished");
 exit;
-
-// getDateFromLog - get date/time of the record in log file
-// Call:	$dateTime = getDateFromLog($line)
-// Where:	$dateTime - date/time of the last record in log file
-//			$line - log line
-//
-function getDateFromLog ($line) {
-  $line_parts = explode("\t", $line);
-  if (preg_match('/^([\d-]+ [\d:]+)/', $line_parts[0], $matches)) {
-	return $matches[1];
-  }
-  return '';							// Invalid date/time format
-}
 
 // readFirstLine - read last line in log file
 // Call:		$line = readFirstLine($logFile)

@@ -3,7 +3,7 @@
 // sessions.php - Save FM sessions based on log saved in DB
 //
 //
-// Vers. 1.0 , YP 12/08/2015
+// Vers. 1.0 , YP 03/22/2016
 //
 //
 // Copyright © 2015 Neo Code Software Ltd
@@ -12,6 +12,7 @@
 //
 // History:
 // ALPHA, YP 12/08/2015 - Alpha release
+// 1.0, YP 03/22/2016 - Added schedule tasks events processing
 //
 
 include_once('config.php');			// configuration and common stuff
@@ -30,12 +31,15 @@ if(!$ckStart->canStart()) {			// Check if script already running. Doesn't allow 
   printLogAndDie("Script is already running.");
 }
 
+CleanUpDB();						// Cleanup DB
+
 $user_session = array();
+$script_session = array();
 $opened_connections = array();
 $session_to_close = array();
 $last_used_app = array();
 $lastProcessedDate = '';
-$sth = $DB->dbh->prepare("SELECT * FROM FmAccessLog WHERE SessionId=? ORDER BY LogDate, LogTime");
+$sth = $DB->dbh->prepare("SELECT * FROM FmAccessLog WHERE SessionId=? ORDER BY LogDate, LogTime, LogSec, Id LIMIT 100000");	# Limit request to prevent Allowed memory size ... exhausted error
 $sth->execute(array(0));
 if ($sth->errorInfo()[1]) {
   printLogAndDie("DB error: ".$sth->errorInfo()[2]);
@@ -137,6 +141,7 @@ while ($rec = $sth->fetch(PDO::FETCH_ASSOC)) {
 		$user_session[$clientKey] = array();	// Prepare array to store session information
 	  }
 	  $user_session[$clientKey][] = array(
+		'SessionType' => FM_ACCESS_TYPE,
 	    'FmClientKey' => $fmClientKey,
 	    'FmApp' => array_key_exists($clientKey,$opened_connections) ? $opened_connections[$clientKey]['FmApp'] : array_key_exists($clientKey,$last_used_app) ? $last_used_app[$clientKey] : '',
 	    'OpenDBs' => array($rec['DbName'] => $rec['FmLoginName']),
@@ -182,7 +187,7 @@ while ($rec = $sth->fetch(PDO::FETCH_ASSOC)) {
 	}
   }
 
-  else if ($rec['LogCode'] == '22') {			// Close connection code
+  else if ($rec['LogCode'] == '22' || $rec['LogCode'] == '30') {			// Close connection code
 	$ses2Close = -1;
 	if (array_key_exists($clientKey,$session_to_close)) {	//  We have prepared session to close
 	  $ses2Close = $session_to_close[$clientKey];
@@ -204,6 +209,46 @@ while ($rec = $sth->fetch(PDO::FETCH_ASSOC)) {
 	  }
 	}
   }
+
+  else if ($rec['LogCode'] == '689') {			// Schedule "%1" has started FileMaker script
+    if (array_key_exists($clientKey,$script_session)) {	// New schedule started. Didn't find "complete" records for previous session
+      if (array_key_exists('LastDate',$script_session[$clientKey])) {
+	    $script_session[$clientKey]['EndDate'] = $script_session[$clientKey]['LastDate'];
+	  }
+	  createSession($script_session[$clientKey]);
+	  unset($script_session[$clientKey]);
+    }
+	$script_session[$clientKey]= array(
+	  'SessionType' => FM_SCHED_TYPE,
+	  'FmClientKey' => $fmClientKey,
+	  'FmApp' => '',
+	  'Rec' => $rec,
+	  'Ids' => array($rec['Id']),
+	  'StartDate' => $rec['LogDate'].' '.$rec['LogTime'], // Start session date - date/time of first found record
+	  'LastDate' => $rec['LogDate'].' '.$rec['LogTime']	// Date/time of the last action in this session
+	);
+  }
+  else if ($rec['LogCode'] == '645') {			// Schedule "Send milestone notifications" scripting error
+    if (array_key_exists($clientKey,$script_session)) { // Find opened session(s) for this client. Add record in exist session
+	  $script_session[$clientKey]['Ids'][] = $rec['Id'];
+	  $script_session[$clientKey]['LastDate'] = $rec['LogDate'].' '.$rec['LogTime'];	// Date/time of the last action in this session
+	}
+	else {
+	  markLogRecord(-1,$rec['Id']);
+	}
+  }
+  else if ($rec['LogCode'] == '150' || $rec['LogCode'] == '644' || $rec['LogCode'] == '152') {			// Schedule "%1" completed/aborted ...
+	if (array_key_exists($clientKey,$script_session)) { // Find opened session(s) for this client. Add record in exist session
+	  $script_session[$clientKey]['Ids'][] = $rec['Id'];
+	  $script_session[$clientKey]['EndDate']= $rec['LogDate'].' '.$rec['LogTime'];
+	  createSession($script_session[$clientKey]);
+	  unset($script_session[$clientKey]);
+	}
+    else {
+	  markLogRecord(-1,$rec['Id']);
+    }
+  }
+
   else {									// Don't know how to use this code
 	$LOG->message("Invalid code in record ".$rec['Id']);
 	markLogRecord(-1,$rec['Id']);
@@ -233,12 +278,13 @@ function createSession($rec) {
   global $DB;
 //print ("Create session");
 //print_r($rec);
-  if (!array_key_exists('EndDate',$rec)) {							// Close session without end date
+  if (!array_key_exists('EndDate',$rec)) {			// Close session without end date
 	$rec['EndDate'] = setSessionEndDate ($rec);
   }
+  $rec['SessionTime'] = strtotime($rec['EndDate']) - strtotime($rec['StartDate']);
   													// Create new session
-  $sth = $DB->dbh->prepare("INSERT INTO FmClientSession (StartDate,EndDate,ServerName,FmClient,FmClientIP,FmLoginName,FmApp,FmAppType,ConnectionType,OwnerName) VALUES (?,?,?,?,?,?,?,?,?,?)");
-  $sth->execute(array($rec['StartDate'],$rec['EndDate'],$rec['Rec']['ServerName'],$rec['Rec']['FmClient'],$rec['Rec']['FmClientIP'],$rec['Rec']['FmLoginName'],$rec['FmApp'],getFmAppType($rec['FmApp']),getFmConnType($rec['FmApp']),$rec['Rec']['OwnerName']));
+  $sth = $DB->dbh->prepare("INSERT INTO FmClientSession (SessionType,StartDate,EndDate,SessionTime,ServerName,FmClient,FmClientIP,FmLoginName,FmApp,FmAppType,ConnectionType,OwnerName) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)");
+  $sth->execute(array($rec['SessionType'],$rec['StartDate'],$rec['EndDate'],$rec['SessionTime'],$rec['Rec']['ServerName'],$rec['Rec']['FmClient'],$rec['Rec']['FmClientIP'],$rec['Rec']['FmLoginName'],$rec['FmApp'],getFmAppType($rec['FmApp']),getFmConnType($rec['FmApp']),$rec['Rec']['OwnerName']));
   if ($sth->errorInfo()[1]) {
 	printLogAndDie("DB error: ".$sth->errorInfo()[2]);
   }
@@ -262,6 +308,7 @@ function markLogRecord($sessionId,$id) {
 	printLogAndDie("DB error: ".$sth->errorInfo()[2]);
   }
 }
+
 
 // setSessionEndDate - set session's end date if session is closed without disconnect code
 // Call: 	$endDate = setSessionEndDate($sessRec);
